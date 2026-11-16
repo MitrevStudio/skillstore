@@ -1,9 +1,9 @@
 {
   "name": "tutorial-video-studio",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Engine for narrated, captioned screencast videos (Playwright + ElevenLabs + ffmpeg).",
+  "description": "Engine for narrated, captioned screencast videos (Playwright + ElevenLabs or free Edge TTS + ffmpeg).",
   "dependencies": {
     "playwright": "^1.50.0"
   }

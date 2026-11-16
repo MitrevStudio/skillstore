@@ -10,8 +10,10 @@
 //   authCookies? : async () => [{name,value,url}]   (for authed:true clips)
 //   respell?     : [[from, to], ...]  phonetic swaps applied to NARRATION only
 //
-// Env: ELEVENLABS_API_KEY (or the key named by studio.apiKeyEnv). Playwright
-// must be importable from --require-base (default: the config file's folder).
+// Narration: studio.ttsProvider = "elevenlabs" (default; needs ELEVENLABS_API_KEY
+// or the key named by studio.apiKeyEnv) or "edge" (free; needs `pip install
+// edge-tts`, no key). Playwright must be importable from --require-base
+// (default: the config file's folder).
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -43,6 +45,10 @@ async function produceClip(id) {
   const work = path.join(CFG.scratchDir, "work", id)
   fs.mkdirSync(work, { recursive: true })
 
+  // Synthesise all narration BEFORE recording, so TTS latency (network, or the
+  // edge-tts process start) never becomes dead air between beats in the video.
+  for (const b of clip.beats) { const { dur, mp3 } = await S.synth(say(b.text)); b.dur = dur; b.mp3 = mp3 }
+
   const cookies = clip.authed && authCookies ? await authCookies() : undefined
   const browser = await S.launch()
   const { ctx, page } = await S.newPage(browser, { videoDir: work, cookies })
@@ -51,14 +57,13 @@ async function produceClip(id) {
   await wait(page, 300)
 
   for (const b of clip.beats) {
-    const { dur, mp3 } = await S.synth(say(b.text))
-    b.dur = dur; b.mp3 = mp3
+    const dur = b.dur
     // Narration starts WITH the action, so the whole action is visible while spoken.
     const start = (Date.now() - t0) / 1000
     b.start = start; b.end = start + dur + 0.1
     try { await b.do(page, S) } catch (e) { console.log("  beat warn:", e.message.slice(0, 70)) }
     const elapsed = (Date.now() - t0) / 1000 - start
-    await wait(page, Math.round(Math.max(dur - elapsed, 0.12) * 1000))
+    await wait(page, Math.round((Math.max(dur - elapsed, 0.12) + (CFG.beatGap ?? 0.25)) * 1000))
   }
   await wait(page, 400)
   await ctx.close()

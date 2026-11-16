@@ -10,8 +10,14 @@ export const studio = {
   outDir: path.resolve("tutorial-videos"),// where finished .mp4 + .srt land
   scratchDir: path.resolve(".studio"),    // work/cache dir (can be temp)
   channel: "",                     // "msedge" or "chrome"; "" = Playwright's bundled chromium
-  voiceId: process.env.ELEVENLABS_VOICE_ID, // select a voice available to your account
-  modelId: "eleven_v3",                  // "eleven_v3" (expressive) | "eleven_multilingual_v2" (most stable)
+  // Narration provider — see references/tts-providers.md
+  //   "elevenlabs": paid, most natural; needs ELEVENLABS_API_KEY + voiceId (default)
+  //   "edge":       free, no key; needs `pip install edge-tts`
+  ttsProvider: "elevenlabs",
+  // edgeVoice: "bg-BG-KalinaNeural",     // edge only; or "bg-BG-BorislavNeural"
+  // edgeRate: "+0%",                     // edge only; with edge also set speed: 1.0
+  voiceId: process.env.ELEVENLABS_VOICE_ID, // elevenlabs only: a voice available to your account
+  modelId: "eleven_v3",                  // elevenlabs only: "eleven_v3" (expressive) | "eleven_multilingual_v2" (most stable)
   settingsVer: "v1",                     // bump to force-regenerate cached audio
   voiceSettings: { stability: 0.5, similarity_boost: 0.8, use_speaker_boost: true },
   speed: 1.18,                           // 1.0 = original tempo; >1 faster (pitch preserved)
