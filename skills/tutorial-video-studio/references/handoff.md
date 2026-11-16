@@ -13,10 +13,12 @@ does not, first copy that folder into the target machine's `~/.claude/skills/`.
 >    real users' personal data). Seed a few representative records.
 > 2. Install Playwright browsers once (`npx playwright install msedge` or
 >    `chromium`) and ensure `ffmpeg`/`ffprobe` are on PATH.
-> 3. Put an ElevenLabs key in the environment as `ELEVENLABS_API_KEY`. Pick a
->    voice id for the target language (ask me if unsure).
+> 3. Narration: either put an ElevenLabs key in the environment as
+>    `ELEVENLABS_API_KEY` and pick a voice id (ask me if unsure), or use the
+>    free provider — `pip install edge-tts` and set `ttsProvider: "edge"` with
+>    `edgeVoice` (Bulgarian: `bg-BG-KalinaNeural` / `bg-BG-BorislavNeural`).
 > 4. Write `video/clips.mjs` from the skill's `references/clips-template.mjs`:
->    set `studio` config (baseUrl, outDir, voiceId, wordmark), wire `authCookies`
+>    set `studio` config (baseUrl, outDir, ttsProvider + voice, wordmark), wire `authCookies`
 >    to how THIS app authenticates, and write one clip per feature area — short
 >    one-sentence beats, each `do()` performing the on-screen action.
 > 5. Produce one clip first, render its spectrogram (see
@@ -31,8 +33,9 @@ does not, first copy that folder into the target machine's `~/.claude/skills/`.
 ## What to tune after first review
 
 - **Too slow / too fast:** `studio.speed` (0.9–1.25) and the card durations.
-- **Audio glitches / second voice:** switch `modelId` to
+- **Audio glitches / second voice (ElevenLabs):** switch `modelId` to
   `eleven_multilingual_v2`, bump `settingsVer`, re-run.
+- **Edge narration fails with 403:** `pip install -U edge-tts`.
 - **Mispronounced UI terms:** add `[from, to]` pairs to `respell`.
 - **Captions unreadable on light pages:** the `.ass` style already uses an
   opaque box; raise `Fontsize`/box alpha in `studio.mjs > writeAss` if needed.

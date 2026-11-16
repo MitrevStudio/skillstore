@@ -40,12 +40,18 @@ ffmpeg -y -i a.wav -lavfi "showspectrumpic=s=1400x420:legend=1" spec.png
 ```
 
 - **Clean:** speech bands with harmonics; silences are solid black; energy rolls
-  off ~15–16 kHz.
+  off ~15–16 kHz (ElevenLabs) or ~12 kHz (Edge TTS, whose source is 24 kHz).
 - **Broken:** regular vertical streaks to 20 kHz running through the whole
   clip, present even in the silent gaps. If you see that comb, the format
   unification above has been broken somewhere.
 
 ## Voice model notes
+
+- Edge TTS (`ttsProvider: "edge"`) returns 24 kHz mono MP3. The assembly
+  graph resamples it to stereo 48 kHz like any other source, so the rules above
+  are unchanged.
+- All narration is synthesised before the browser starts recording, so TTS
+  latency never shows up as dead air between beats.
 
 - `eleven_v3` is expressive but can hallucinate artifacts / a faint second
   voice, especially on long sentences. Mitigate: `stability: 0.5`–`1.0`, keep

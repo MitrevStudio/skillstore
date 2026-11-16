@@ -1,7 +1,7 @@
 // tutorial-video-studio — generic engine
 // ---------------------------------------------------------------------------
 // Records a scripted browser flow with Playwright (animated cursor + click
-// ripples), narrates it with ElevenLabs TTS, burns Bulgarian/any-language
+// ripples), narrates it with ElevenLabs or free Edge TTS, burns Bulgarian/any-language
 // captions, and assembles a clean 1080p MP4 with intro/outro cards.
 //
 // This file is PROJECT-AGNOSTIC. All project specifics (target URL, auth,
@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process"
 // Playwright is resolved from wherever the runner installed it (see produce.mjs
 // --require-base, defaults to this scripts/ dir).
 let _require = createRequire(import.meta.url)
-export function setRequireBase(dir) { _require = createRequire(path.join(dir, "noop.js")) }
+export function setRequireBase(dir) { _require = createRequire(path.join(path.resolve(dir), "noop.js")) }
 function pw() { return _require("playwright") }
 
 // ── configuration ───────────────────────────────────────────────────────────
@@ -31,11 +31,20 @@ let CFG = {
   outDir: "./videos",
   scratchDir: "./.studio",
   channel: "msedge",          // Playwright browser channel; "" uses bundled chromium
+  ttsProvider: "elevenlabs",  // "elevenlabs" (paid, most natural) | "edge" (free, online, no API key)
+  // -- edge provider (the `edge-tts` Python CLI → Microsoft Edge Read Aloud voices) --
+  edgeVoice: "bg-BG-KalinaNeural", // or "bg-BG-BorislavNeural"; `edge-tts --list-voices` for other languages
+  edgeRate: "+0%",            // native speaking rate, e.g. "+10%" / "-5%" (applied by the service)
+  edgePitch: "+0Hz",
+  edgeVolume: "+0%",
+  edgeCommand: "",            // "" = auto-detect (`edge-tts`, then `python -m edge_tts`); or e.g. "C:/venv/Scripts/edge-tts.exe"
+  // -- elevenlabs provider --
   voiceId: "",                // ElevenLabs voice id (required for narration)
   modelId: "eleven_v3",       // or "eleven_multilingual_v2" (more stable, less expressive)
   settingsVer: "v1",          // bump to force-regenerate cached audio when voice settings change
   voiceSettings: { stability: 0.5, similarity_boost: 0.8, use_speaker_boost: true },
   speed: 1.18,                // post-process tempo (keeps pitch); 1.0 = original
+  beatGap: 0.25,              // seconds of breathing room between narration beats
   apiKeyEnv: "ELEVENLABS_API_KEY",
   wordmark: "",               // intro/outro big text, e.g. "A C M E"
   cardSubtitle: "",           // outro subtitle, e.g. "Admin panel"
@@ -59,22 +68,78 @@ function apiKey() {
   return k.trim()
 }
 
-// ── ElevenLabs TTS (cached by text+settings, tempo-adjusted) ─────────────────
-export async function synth(text) {
-  const cacheDir = path.join(CFG.scratchDir, "tts-cache")
-  const hash = crypto.createHash("md5")
-    .update(CFG.settingsVer + "|" + CFG.modelId + "|" + CFG.voiceId + "|" + text)
-    .digest("hex").slice(0, 16)
-  const mp3 = path.join(cacheDir, `${hash}.mp3`)
-  if (!fs.existsSync(mp3)) {
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${CFG.voiceId}?output_format=mp3_44100_128`, {
-      method: "POST",
-      headers: { "xi-api-key": apiKey(), "Content-Type": "application/json" },
-      body: JSON.stringify({ text, model_id: CFG.modelId, voice_settings: CFG.voiceSettings }),
-    })
-    if (!res.ok) throw new Error("TTS failed " + res.status + " " + (await res.text()).slice(0, 200))
-    fs.writeFileSync(mp3, Buffer.from(await res.arrayBuffer()))
+// ── TTS providers ────────────────────────────────────────────────────────────
+// Each provider: key(text) → string hashed into the cache filename;
+//                fetch(text, mp3) → writes the raw (un-tempo'd) MP3.
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// edge-tts is a Python CLI (pip install edge-tts). Find a way to invoke it once.
+let _edgeCmd = null
+function edgeCmd() {
+  if (_edgeCmd) return _edgeCmd
+  const candidates = CFG.edgeCommand
+    ? [[CFG.edgeCommand]]
+    : [["edge-tts"], ["python", "-m", "edge_tts"], ["py", "-m", "edge_tts"], ["python3", "-m", "edge_tts"]]
+  for (const c of candidates) {
+    try { execFileSync(c[0], [...c.slice(1), "--version"], { stdio: "ignore" }); return (_edgeCmd = c) } catch {}
   }
+  throw new Error(CFG.edgeCommand
+    ? `edgeCommand "${CFG.edgeCommand}" is not runnable`
+    : "edge-tts not found. Install it with `pip install edge-tts` (or `pipx install edge-tts`), or set studio.edgeCommand")
+}
+
+const PROVIDERS = {
+  elevenlabs: {
+    // unchanged from v1 so existing tts-cache folders stay valid
+    key: text => CFG.settingsVer + "|" + CFG.modelId + "|" + CFG.voiceId + "|" + text,
+    async fetch(text, mp3) {
+      if (!CFG.voiceId) throw new Error("studio.voiceId is required for the elevenlabs provider")
+      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${CFG.voiceId}?output_format=mp3_44100_128`, {
+        method: "POST",
+        headers: { "xi-api-key": apiKey(), "Content-Type": "application/json" },
+        body: JSON.stringify({ text, model_id: CFG.modelId, voice_settings: CFG.voiceSettings }),
+      })
+      if (!res.ok) throw new Error("TTS failed " + res.status + " " + (await res.text()).slice(0, 200))
+      fs.writeFileSync(mp3, Buffer.from(await res.arrayBuffer()))
+    },
+  },
+  edge: {
+    key: text => ["edge", CFG.settingsVer, CFG.edgeVoice, CFG.edgeRate, CFG.edgePitch, CFG.edgeVolume, text].join("|"),
+    async fetch(text, mp3) {
+      const cmd = edgeCmd()
+      // text goes through a UTF-8 file: safe for Cyrillic and for lines starting with "-"
+      const txt = mp3.replace(/\.mp3$/, ".txt"), tmp = mp3 + ".part"
+      fs.writeFileSync(txt, text, "utf8")
+      let lastErr
+      // the service occasionally closes the socket before sending audio — retry
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          execFileSync(cmd[0], [...cmd.slice(1), "--voice", CFG.edgeVoice, "--file", txt,
+            `--rate=${CFG.edgeRate}`, `--pitch=${CFG.edgePitch}`, `--volume=${CFG.edgeVolume}`,
+            "--write-media", tmp], { stdio: ["ignore", "ignore", "pipe"] })
+          if (fs.statSync(tmp).size < 500) throw new Error("empty audio")
+          fs.renameSync(tmp, mp3); fs.rmSync(txt, { force: true })
+          return
+        } catch (e) {
+          lastErr = (e.stderr && e.stderr.toString().trim().split("\n").pop()) || e.message
+          fs.rmSync(tmp, { force: true })
+          if (attempt < 4) await sleep(1500 * attempt)
+        }
+      }
+      fs.rmSync(txt, { force: true })
+      throw new Error(`edge-tts failed for voice ${CFG.edgeVoice}: ${String(lastErr).slice(0, 300)} — if this is a 403, upgrade: pip install -U edge-tts`)
+    },
+  },
+}
+
+// ── synth (cached by provider+text+settings, tempo-adjusted) ─────────────────
+export async function synth(text) {
+  const provider = PROVIDERS[CFG.ttsProvider || "elevenlabs"]
+  if (!provider) throw new Error(`Unknown studio.ttsProvider "${CFG.ttsProvider}" (use: ${Object.keys(PROVIDERS).join(", ")})`)
+  const cacheDir = path.join(CFG.scratchDir, "tts-cache")
+  const hash = crypto.createHash("md5").update(provider.key(text)).digest("hex").slice(0, 16)
+  const mp3 = path.join(cacheDir, `${hash}.mp3`)
+  if (!fs.existsSync(mp3)) await provider.fetch(text, mp3)
   let out = mp3
   if (CFG.speed && CFG.speed !== 1) {
     const fast = mp3.replace(/\.mp3$/, `_${String(CFG.speed).replace(".", "")}.mp3`)
